@@ -21,3 +21,6 @@ oct-e2e-viewer = "oct_e2e_viewer.app:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+oct_e2e_viewer = ["resources/*"]

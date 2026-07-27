@@ -8,6 +8,7 @@ fundus image.
 
 import sys
 import tkinter as tk
+from importlib.resources import files
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -25,6 +26,7 @@ class Viewer(tk.Tk):
         super().__init__()
         self.title("OCT E2E Viewer")
         self.geometry("1100x650")
+        self._set_icon()
 
         self.volume: E2EVolume | None = None
         self.index = 0
@@ -38,6 +40,11 @@ class Viewer(tk.Tk):
 
         if initial_path:
             self.open_path(initial_path)
+
+    def _set_icon(self):
+        icon_path = files("oct_e2e_viewer") / "resources" / "icon.png"
+        self._icon_image = tk.PhotoImage(file=icon_path)
+        self.iconphoto(True, self._icon_image)
 
     # ------------------------------------------------------------------ #
     # UI construction
@@ -211,6 +218,11 @@ class Viewer(tk.Tk):
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] == "--install-desktop-entry":
+        from .desktop_integration import install_desktop_entry
+
+        install_desktop_entry()
+        return
     initial_path = argv[0] if argv else None
     app = Viewer(initial_path=initial_path)
     app.mainloop()

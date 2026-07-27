@@ -3,6 +3,7 @@ Type=Application
 Name=OCT E2E Viewer
 Comment=View Heyex .E2E OCT scans slice by slice
 Exec=__LAUNCHER__ %f
+Icon=__ICON__
 Terminal=false
 Categories=Graphics;Viewer;Science;
 MimeType=application/x-heyex-e2e;
