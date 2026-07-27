@@ -2,6 +2,8 @@
 
 A small desktop app for scrolling through the B-scans of a Heidelberg Heyex `.E2E` OCT file, one slice at a time, with the current slice's position marked on the en-face fundus image. Built on [eyepy](https://github.com/MedVisBonn/eyepy) for reading `.E2E` files and Tkinter for the UI.
 
+![Demo of scrolling through B-scans](assets/demo.webp)
+
 ## Install
 
 The easiest way to install is with [pipx](https://pipx.pypa.io/), which puts the app in its own isolated environment and puts the `oct-e2e-viewer` command on your PATH, without you needing to create or activate anything:
