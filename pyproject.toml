@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "oct-e2e-viewer"
+version = "0.1.0"
+description = "A small desktop viewer for scrolling through Heyex .E2E OCT scans"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = [
+    "eyepy>=0.13",
+    "numpy",
+    "matplotlib",
+]
+
+[project.scripts]
+oct-e2e-viewer = "oct_e2e_viewer.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
