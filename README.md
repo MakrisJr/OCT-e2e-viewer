@@ -43,19 +43,17 @@ oct-e2e-viewer path/to/scan.e2e    # opens a file directly
 To make double-clicking a `.e2e`/`.E2E` file in your file manager open it in this app:
 
 ```bash
-./scripts/install_file_association.sh
+oct-e2e-viewer --install-desktop-entry
 ```
 
-If you installed with pipx, `oct-e2e-viewer` is already on `PATH` and you can just run the script directly. If you installed with `pip install -e .` in a venv/conda env instead, run it from *within* that environment (e.g. after `conda activate <env>`). Either way, the script looks up `oct-e2e-viewer` on `PATH` and points the `.desktop` launcher straight at that installed script. Since the installed script already has its environment's Python baked into its shebang, the launcher works without needing to re-activate anything when double-clicked, and there's nothing machine- or env-name-specific to edit.
-
-This registers a MIME type for `.e2e`/`.E2E` files, installs a `.desktop` launcher under `~/.local/share/applications`, and sets it as the default handler via `xdg-mime`. It's a user-level install (no sudo).
+This works regardless of how you installed (pipx or an editable venv/conda install) and doesn't require a local checkout of this repo -- just run it with `oct-e2e-viewer` on `PATH` (or from *within* the venv/conda env you installed into). It registers a MIME type for `.e2e`/`.E2E` files, installs a `.desktop` launcher (with icon) under `~/.local/share/applications`, and sets it as the default handler via `xdg-mime`. It's a user-level install (no sudo).
 
 ## Project layout
 
 ```text
 src/oct_e2e_viewer/
-    loader.py   # thin wrapper around eyepy's import_heyex_e2e
-    app.py      # Tkinter UI
-resources/                    # .desktop template + MIME type definition
-scripts/install_file_association.sh
+    loader.py               # thin wrapper around eyepy's import_heyex_e2e
+    app.py                  # Tkinter UI
+    desktop_integration.py  # `--install-desktop-entry` (Linux launcher + MIME type)
+    resources/              # icon, .desktop template, MIME type definition
 ```
