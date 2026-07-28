@@ -53,6 +53,7 @@ class Viewer(tk.Tk):
         menubar = tk.Menu(self)
         file_menu = tk.Menu(menubar, tearoff=False)
         file_menu.add_command(label="Open...", command=self._on_open, accelerator="Ctrl+O")
+        file_menu.add_command(label="Export as PNG...", command=self._on_export, accelerator="Ctrl+E")
         file_menu.add_separator()
         file_menu.add_command(label="Quit", command=self.destroy, accelerator="Ctrl+Q")
         menubar.add_cascade(label="File", menu=file_menu)
@@ -96,6 +97,7 @@ class Viewer(tk.Tk):
 
     def _bind_keys(self):
         self.bind("<Control-o>", lambda e: self._on_open())
+        self.bind("<Control-e>", lambda e: self._on_export())
         self.bind("<Control-q>", lambda e: self.destroy())
         self.bind("<Left>", lambda e: self._step(-1))
         self.bind("<Right>", lambda e: self._step(1))
@@ -137,6 +139,29 @@ class Viewer(tk.Tk):
 
         self._draw_fundus()
         self._redraw()
+
+    def _on_export(self):
+        if self.volume is None:
+            messagebox.showinfo("Export as PNG", "Open a .E2E file first.")
+            return
+
+        default_name = f"{self.volume.path.stem}_bscan{self.index}.png"
+        path = filedialog.asksaveasfilename(
+            title="Export as PNG",
+            defaultextension=".png",
+            initialfile=default_name,
+            filetypes=[("PNG image", "*.png"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+
+        try:
+            self.figure.savefig(path, dpi=150)
+        except Exception as exc:
+            messagebox.showerror("Failed to export", f"Could not save {path}:\n\n{exc}")
+            return
+
+        self.status_var.set(f"Exported to {path}")
 
     # ------------------------------------------------------------------ #
     # Drawing
