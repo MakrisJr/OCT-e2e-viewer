@@ -10,13 +10,14 @@ import sys
 import tkinter as tk
 from importlib.resources import files
 from pathlib import Path
-from tkinter import filedialog, messagebox
+from tkinter import messagebox
 
 import ttkbootstrap as ttk
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
 from .loader import E2EVolume, load_e2e
+from .native_dialogs import ask_open_filename, ask_save_filename
 
 WHEEL_STEP = 1
 PAGE_STEP = 10
@@ -116,7 +117,7 @@ class Viewer(ttk.Window):
     # File loading
     # ------------------------------------------------------------------ #
     def _on_open(self):
-        path = filedialog.askopenfilename(
+        path = ask_open_filename(
             title="Open .E2E file",
             filetypes=[("Heyex E2E files", "*.e2e *.E2E"), ("All files", "*.*")],
         )
@@ -147,7 +148,7 @@ class Viewer(ttk.Window):
             return
 
         default_name = f"{self.volume.path.stem}_bscan{self.index}.png"
-        path = filedialog.asksaveasfilename(
+        path = ask_save_filename(
             title="Export as PNG",
             defaultextension=".png",
             initialfile=default_name,
