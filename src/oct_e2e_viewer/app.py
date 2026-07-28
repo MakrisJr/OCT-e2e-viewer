@@ -10,8 +10,9 @@ import sys
 import tkinter as tk
 from importlib.resources import files
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox
 
+import ttkbootstrap as ttk
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
@@ -21,9 +22,9 @@ WHEEL_STEP = 1
 PAGE_STEP = 10
 
 
-class Viewer(tk.Tk):
+class Viewer(ttk.Window):
     def __init__(self, initial_path=None):
-        super().__init__()
+        super().__init__(themename="flatly")
         self.title("OCT E2E Viewer")
         self.geometry("1100x650")
         self._set_icon()
