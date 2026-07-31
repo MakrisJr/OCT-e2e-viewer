@@ -37,6 +37,22 @@ class E2EVolume:
     def laterality(self):
         return self.ev.meta.get("laterality")
 
+    @property
+    def layer_names(self):
+        """Names of segmented retinal layers available for this volume, if any."""
+        return list(self.ev.layers.keys())
+
+    def bscan_layers(self, index):
+        """Return {layer_name: 1D height array} for the B-scan at `index`.
+
+        Each height array holds one y-pixel position per A-scan (column) in
+        the B-scan, with NaN where the segmentation is undefined.
+        """
+        return {
+            name: np.asarray(self.ev[index].layers[name].data)
+            for name in self.layer_names
+        }
+
     def bscan_line(self, index):
         """Return ((x0, y0), (x1, y1)) for `index`'s scan line in fundus pixel
         coordinates, or None if the position can't be resolved (e.g. no

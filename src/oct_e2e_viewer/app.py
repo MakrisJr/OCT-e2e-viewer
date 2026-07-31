@@ -33,6 +33,7 @@ class Viewer(ttk.Window):
         self.volume: E2EVolume | None = None
         self.index = 0
         self._updating_controls = False
+        self.show_layers_var = tk.BooleanVar(value=True)
 
         self._build_menu()
         self._build_figure()
@@ -72,6 +73,7 @@ class Viewer(ttk.Window):
         self.fundus_image = None
         self.bscan_image = None
         self.position_line = None
+        self.layer_lines = []
 
         self.canvas = FigureCanvasTkAgg(self.figure, master=self)
         self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
@@ -90,6 +92,13 @@ class Viewer(ttk.Window):
         entry = ttk.Entry(frame, textvariable=self.index_var, width=6, justify=tk.RIGHT)
         entry.pack(side=tk.LEFT)
         entry.bind("<Return>", self._on_entry)
+
+        ttk.Checkbutton(
+            frame,
+            text="Layer annotations",
+            variable=self.show_layers_var,
+            command=self._redraw,
+        ).pack(side=tk.LEFT, padx=(12, 0))
 
     def _build_status_bar(self):
         self.status_var = tk.StringVar(value="Open a .E2E file to begin (File > Open, or Ctrl+O).")
@@ -192,6 +201,18 @@ class Viewer(ttk.Window):
             self.bscan_image.set_data(bscan)
             self.bscan_image.set_clim(bscan.min(), bscan.max())
         self.ax_bscan.set_title(f"B-scan {self.index}/{self.volume.n_bscans - 1}")
+
+        for line in self.layer_lines:
+            line.remove()
+        self.layer_lines = []
+        if self.show_layers_var.get():
+            for name, heights in self.volume.bscan_layers(self.index).items():
+                (line,) = self.ax_bscan.plot(heights, linewidth=1, label=name)
+                self.layer_lines.append(line)
+        # Layer lines have no sticky edges, so they can nudge autoscale into
+        # zooming out slightly; pin the view back to the image extent.
+        self.ax_bscan.set_xlim(-0.5, bscan.shape[1] - 0.5)
+        self.ax_bscan.set_ylim(bscan.shape[0] - 0.5, -0.5)
 
         if self.position_line is not None:
             line = self.volume.bscan_line(self.index)
