@@ -13,7 +13,7 @@ from pathlib import Path
 from tkinter import messagebox
 
 import ttkbootstrap as ttk
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
 
 from .loader import E2EVolume, load_e2e
@@ -77,6 +77,10 @@ class Viewer(ttk.Window):
 
         self.canvas = FigureCanvasTkAgg(self.figure, master=self)
         self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        self.toolbar = NavigationToolbar2Tk(self.canvas, self, pack_toolbar=False)
+        self.toolbar.update()
+        self.toolbar.pack(side=tk.TOP, fill=tk.X)
 
     def _build_controls(self):
         frame = ttk.Frame(self)
@@ -150,6 +154,9 @@ class Viewer(ttk.Window):
 
         self._draw_fundus()
         self._redraw()
+        # Reset the toolbar's zoom/pan history so "Home" returns to the
+        # newly loaded image instead of the empty axes from app startup.
+        self.toolbar.update()
 
     def _on_export(self):
         if self.volume is None:
@@ -195,6 +202,13 @@ class Viewer(ttk.Window):
             return
 
         bscan = self.volume.bscan(self.index)
+        same_shape = self.bscan_image is not None and self.bscan_image.get_array().shape == bscan.shape
+        if same_shape:
+            # Preserve whatever zoom/pan the user set via the toolbar instead
+            # of snapping back out on every navigation step.
+            prev_xlim = self.ax_bscan.get_xlim()
+            prev_ylim = self.ax_bscan.get_ylim()
+
         if self.bscan_image is None:
             self.bscan_image = self.ax_bscan.imshow(bscan, cmap="gray")
         else:
@@ -210,9 +224,14 @@ class Viewer(ttk.Window):
                 (line,) = self.ax_bscan.plot(heights, linewidth=1, label=name)
                 self.layer_lines.append(line)
         # Layer lines have no sticky edges, so they can nudge autoscale into
-        # zooming out slightly; pin the view back to the image extent.
-        self.ax_bscan.set_xlim(-0.5, bscan.shape[1] - 0.5)
-        self.ax_bscan.set_ylim(bscan.shape[0] - 0.5, -0.5)
+        # zooming out slightly; pin the view back to the image extent (or the
+        # user's current zoom, if the B-scan dimensions haven't changed).
+        if same_shape:
+            self.ax_bscan.set_xlim(prev_xlim)
+            self.ax_bscan.set_ylim(prev_ylim)
+        else:
+            self.ax_bscan.set_xlim(-0.5, bscan.shape[1] - 0.5)
+            self.ax_bscan.set_ylim(bscan.shape[0] - 0.5, -0.5)
 
         if self.position_line is not None:
             line = self.volume.bscan_line(self.index)
