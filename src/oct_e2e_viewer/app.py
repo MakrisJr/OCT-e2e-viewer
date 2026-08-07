@@ -241,7 +241,7 @@ class Viewer(ttk.Window):
 
         self.canvas.draw_idle()
         self._update_controls()
-        self._update_status()
+        self._update_status(bscan.shape)
 
     def _update_controls(self):
         self._updating_controls = True
@@ -249,10 +249,13 @@ class Viewer(ttk.Window):
         self.index_var.set(str(self.index))
         self._updating_controls = False
 
-    def _update_status(self):
+    def _update_status(self, bscan_shape):
         parts = [self.volume.path.name, f"slice {self.index}/{self.volume.n_bscans - 1}"]
         if self.volume.laterality:
-            parts.append(f"laterality: {self.volume.laterality}")
+            parts.append(f"eye: {self.volume.laterality}")
+        if self.volume.scan_date:
+            parts.append(f"scanned: {self.volume.scan_date:%Y-%m-%d %H:%M}")
+        parts.append(f"{bscan_shape[1]}x{bscan_shape[0]} px")
         self.status_var.set("  |  ".join(parts))
 
     # ------------------------------------------------------------------ #

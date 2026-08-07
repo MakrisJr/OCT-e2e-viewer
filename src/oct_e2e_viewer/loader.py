@@ -5,6 +5,7 @@ Thin wrapper around eyepy for loading Heyex .E2E OCT files, giving the
 viewer app a small, stable surface instead of talking to eyepy directly.
 """
 
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -36,6 +37,17 @@ class E2EVolume:
     @property
     def laterality(self):
         return self.ev.meta.get("laterality")
+
+    @property
+    def scan_date(self):
+        """Return the volume's acquisition date/time (from its first B-scan's
+        metadata), or None if it isn't present or can't be parsed.
+        """
+        try:
+            raw = self.ev[0].meta["acquisitionTime"]
+            return datetime.fromisoformat(raw)
+        except Exception:
+            return None
 
     @property
     def layer_names(self):
