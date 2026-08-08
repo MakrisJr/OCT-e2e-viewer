@@ -15,6 +15,10 @@ import eyepy
 class E2EVolume:
     """A loaded .E2E scan: the B-scan stack plus its en-face fundus image."""
 
+    # E2E stores laterality as a raw ASCII code (82/76), which eyepy passes
+    # through undecoded rather than resolving to 'R'/'L'.
+    _LATERALITY_CODES = {82: "R", 76: "L"}
+
     def __init__(self, ev, path):
         self.ev = ev
         self.path = Path(path)
@@ -36,7 +40,43 @@ class E2EVolume:
 
     @property
     def laterality(self):
-        return self.ev.meta.get("laterality")
+        raw = self.ev.meta.get("laterality")
+        if raw is None:
+            return None
+        try:
+            return self._LATERALITY_CODES.get(int(raw), str(raw))
+        except (TypeError, ValueError):
+            return str(raw)
+
+    @property
+    def axial_scale_um(self):
+        """Axial (depth) pixel size in micrometers, from the first B-scan's
+        metadata. volume_meta's scale fields are always a 1px placeholder for
+        E2E files in eyepy, so this is the only real device calibration
+        available.
+        """
+        try:
+            return self.ev[0].meta["scale_y"] * 1000
+        except Exception:
+            return None
+
+    def bscan_quality(self, index):
+        """Return the LibE2E quality score (0-1) for the B-scan at `index`,
+        or None if unavailable.
+        """
+        try:
+            return float(self.ev[index].meta["quality"])
+        except Exception:
+            return None
+
+    def bscan_num_averages(self, index):
+        """Return the number of averaged frames (ART) for the B-scan at
+        `index`, or None if unavailable.
+        """
+        try:
+            return int(self.ev[index].meta["numAve"])
+        except Exception:
+            return None
 
     @property
     def scan_date(self):

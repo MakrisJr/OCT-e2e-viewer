@@ -255,6 +255,15 @@ class Viewer(ttk.Window):
             parts.append(f"eye: {self.volume.laterality}")
         if self.volume.scan_date:
             parts.append(f"scanned: {self.volume.scan_date:%Y-%m-%d %H:%M}")
+        quality = self.volume.bscan_quality(self.index)
+        if quality is not None:
+            parts.append(f"quality: {quality:.2f}")
+        num_averages = self.volume.bscan_num_averages(self.index)
+        if num_averages is not None:
+            parts.append(f"averaging: {num_averages}")
+        axial_scale = self.volume.axial_scale_um
+        if axial_scale is not None:
+            parts.append(f"axial: {axial_scale:.2f} µm/px")
         parts.append(f"{bscan_shape[1]}x{bscan_shape[0]} px")
         self.status_var.set("  |  ".join(parts))
 
