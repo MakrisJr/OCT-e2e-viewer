@@ -18,9 +18,18 @@ from matplotlib.figure import Figure
 
 from .loader import E2EVolume, load_e2e
 from .native_dialogs import ask_open_filename, ask_save_filename
+from .recent_files import add_recent_file, clear_recent_files, load_recent_files
 
 WHEEL_STEP = 1
 PAGE_STEP = 10
+
+
+def _recent_label(path):
+    path = Path(path)
+    try:
+        return str(Path("~") / path.relative_to(Path.home()))
+    except ValueError:
+        return str(path)
 
 
 class Viewer(ttk.Window):
@@ -56,11 +65,29 @@ class Viewer(ttk.Window):
         menubar = tk.Menu(self)
         file_menu = tk.Menu(menubar, tearoff=False)
         file_menu.add_command(label="Open...", command=self._on_open, accelerator="Ctrl+O")
+        self.recent_menu = tk.Menu(file_menu, tearoff=False)
+        file_menu.add_cascade(label="Open Recent", menu=self.recent_menu)
         file_menu.add_command(label="Export as PNG...", command=self._on_export, accelerator="Ctrl+E")
         file_menu.add_separator()
         file_menu.add_command(label="Quit", command=self.destroy, accelerator="Ctrl+Q")
         menubar.add_cascade(label="File", menu=file_menu)
         self.config(menu=menubar)
+        self._refresh_recent_menu()
+
+    def _refresh_recent_menu(self):
+        self.recent_menu.delete(0, tk.END)
+        recent = load_recent_files()
+        if not recent:
+            self.recent_menu.add_command(label="(No recent files)", state=tk.DISABLED)
+            return
+        for path in recent:
+            self.recent_menu.add_command(label=_recent_label(path), command=lambda p=path: self.open_path(p))
+        self.recent_menu.add_separator()
+        self.recent_menu.add_command(label="Clear Recent Files", command=self._on_clear_recent)
+
+    def _on_clear_recent(self):
+        clear_recent_files()
+        self._refresh_recent_menu()
 
     def _build_figure(self):
         self.figure = Figure(figsize=(10, 5.5))
@@ -147,6 +174,9 @@ class Viewer(ttk.Window):
             messagebox.showerror("Failed to load file", f"Could not load {path.name}:\n\n{exc}")
             self.status_var.set("Open a .E2E file to begin (File > Open, or Ctrl+O).")
             return
+
+        add_recent_file(path)
+        self._refresh_recent_menu()
 
         self.title(f"OCT E2E Viewer — {path.name}")
         self.index = self.volume.n_bscans // 2
