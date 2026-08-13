@@ -24,6 +24,8 @@ pip install -e .
 
 Either way, this installs the `oct-e2e-viewer` command and the `oct_e2e_viewer` package, including PySide6, so no system Qt/GUI packages need to be installed separately.
 
+> **Note:** editable installs (`pip install -e .` or `pipx install --editable .`) don't re-resolve dependencies on their own. If you pull changes that add or update a dependency and the app then fails to start with an import error, re-run the install command to pick up the change.
+
 ## Run
 
 ```bash
