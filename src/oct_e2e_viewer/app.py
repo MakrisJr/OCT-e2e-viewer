@@ -1,23 +1,35 @@
 """
 app.py
 
-A small Tkinter desktop app for scrolling through the B-scans of a Heyex
+A small Qt desktop app for scrolling through the B-scans of a Heyex
 .E2E OCT file, with the current B-scan's position marked on the en-face
 fundus image.
 """
 
 import sys
-import tkinter as tk
 from importlib.resources import files
 from pathlib import Path
-from tkinter import messagebox
 
-import ttkbootstrap as ttk
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 from matplotlib.figure import Figure
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QAction, QIcon, QKeySequence, QShortcut
+from PySide6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QFileDialog,
+    QHBoxLayout,
+    QLineEdit,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QSlider,
+    QVBoxLayout,
+    QWidget,
+)
+from qt_material import apply_stylesheet
 
 from .loader import E2EVolume, load_e2e
-from .native_dialogs import ask_open_filename, ask_save_filename
 from .recent_files import add_recent_file, clear_recent_files, load_recent_files
 
 WHEEL_STEP = 1
@@ -32,64 +44,84 @@ def _recent_label(path):
         return str(path)
 
 
-class Viewer(ttk.Window):
+class Viewer(QMainWindow):
     def __init__(self, initial_path=None):
-        super().__init__(themename="flatly")
-        self.title("OCT E2E Viewer")
-        self.geometry("1100x650")
+        super().__init__()
+        self.setWindowTitle("OCT E2E Viewer")
+        self.resize(1100, 650)
         self._set_icon()
 
         self.volume: E2EVolume | None = None
         self.index = 0
         self._updating_controls = False
-        self.show_layers_var = tk.BooleanVar(value=True)
 
+        self.fundus_image = None
+        self.bscan_image = None
+        self.position_line = None
+        self.layer_lines = []
+
+        central = QWidget()
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.setCentralWidget(central)
+
+        self._build_figure(layout)
+        self._build_controls(layout)
         self._build_menu()
-        self._build_figure()
-        self._build_controls()
-        self._build_status_bar()
-        self._bind_keys()
+        self._bind_shortcuts()
+        self.statusBar().showMessage("Open a .E2E file to begin (File > Open, or Ctrl+O).")
 
         if initial_path:
             self.open_path(initial_path)
 
     def _set_icon(self):
         icon_path = files("oct_e2e_viewer") / "resources" / "icon.png"
-        self._icon_image = tk.PhotoImage(file=icon_path)
-        self.iconphoto(True, self._icon_image)
+        self.setWindowIcon(QIcon(str(icon_path)))
 
     # ------------------------------------------------------------------ #
     # UI construction
     # ------------------------------------------------------------------ #
     def _build_menu(self):
-        menubar = tk.Menu(self)
-        file_menu = tk.Menu(menubar, tearoff=False)
-        file_menu.add_command(label="Open...", command=self._on_open, accelerator="Ctrl+O")
-        self.recent_menu = tk.Menu(file_menu, tearoff=False)
-        file_menu.add_cascade(label="Open Recent", menu=self.recent_menu)
-        file_menu.add_command(label="Export as PNG...", command=self._on_export, accelerator="Ctrl+E")
-        file_menu.add_separator()
-        file_menu.add_command(label="Quit", command=self.destroy, accelerator="Ctrl+Q")
-        menubar.add_cascade(label="File", menu=file_menu)
-        self.config(menu=menubar)
+        file_menu = self.menuBar().addMenu("&File")
+
+        open_action = QAction("&Open...", self)
+        open_action.setShortcut(QKeySequence.Open)
+        open_action.triggered.connect(self._on_open)
+        file_menu.addAction(open_action)
+
+        self.recent_menu = file_menu.addMenu("Open Recent")
         self._refresh_recent_menu()
 
+        export_action = QAction("&Export as PNG...", self)
+        export_action.setShortcut("Ctrl+E")
+        export_action.triggered.connect(self._on_export)
+        file_menu.addAction(export_action)
+
+        file_menu.addSeparator()
+
+        quit_action = QAction("&Quit", self)
+        quit_action.setShortcut(QKeySequence.Quit)
+        quit_action.triggered.connect(self.close)
+        file_menu.addAction(quit_action)
+
     def _refresh_recent_menu(self):
-        self.recent_menu.delete(0, tk.END)
+        self.recent_menu.clear()
         recent = load_recent_files()
         if not recent:
-            self.recent_menu.add_command(label="(No recent files)", state=tk.DISABLED)
+            action = self.recent_menu.addAction("(No recent files)")
+            action.setEnabled(False)
             return
         for path in recent:
-            self.recent_menu.add_command(label=_recent_label(path), command=lambda p=path: self.open_path(p))
-        self.recent_menu.add_separator()
-        self.recent_menu.add_command(label="Clear Recent Files", command=self._on_clear_recent)
+            action = self.recent_menu.addAction(_recent_label(path))
+            action.triggered.connect(lambda checked=False, p=path: self.open_path(p))
+        self.recent_menu.addSeparator()
+        self.recent_menu.addAction("Clear Recent Files", self._on_clear_recent)
 
     def _on_clear_recent(self):
         clear_recent_files()
         self._refresh_recent_menu()
 
-    def _build_figure(self):
+    def _build_figure(self, layout):
         self.figure = Figure(figsize=(10, 5.5))
         self.ax_fundus = self.figure.add_subplot(1, 2, 1)
         self.ax_bscan = self.figure.add_subplot(1, 2, 2)
@@ -97,90 +129,92 @@ class Viewer(ttk.Window):
             ax.set_xticks([])
             ax.set_yticks([])
 
-        self.fundus_image = None
-        self.bscan_image = None
-        self.position_line = None
-        self.layer_lines = []
+        self.canvas = FigureCanvasQTAgg(self.figure)
+        self.canvas.wheelEvent = self._on_canvas_wheel
+        self.toolbar = NavigationToolbar2QT(self.canvas, self)
 
-        self.canvas = FigureCanvasTkAgg(self.figure, master=self)
-        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        layout.addWidget(self.toolbar)
+        layout.addWidget(self.canvas, stretch=1)
 
-        self.toolbar = NavigationToolbar2Tk(self.canvas, self, pack_toolbar=False)
-        self.toolbar.update()
-        self.toolbar.pack(side=tk.TOP, fill=tk.X)
+    def _build_controls(self, layout):
+        frame = QWidget()
+        row = QHBoxLayout(frame)
+        row.setContentsMargins(8, 4, 8, 4)
 
-    def _build_controls(self):
-        frame = ttk.Frame(self)
-        frame.pack(side=tk.TOP, fill=tk.X, padx=8, pady=(0, 4))
+        prev_btn = QPushButton("< Prev")
+        prev_btn.clicked.connect(lambda: self._step(-1))
+        row.addWidget(prev_btn)
 
-        ttk.Button(frame, text="< Prev", command=lambda: self._step(-1)).pack(side=tk.LEFT)
-        ttk.Button(frame, text="Next >", command=lambda: self._step(1)).pack(side=tk.LEFT, padx=(4, 12))
+        next_btn = QPushButton("Next >")
+        next_btn.clicked.connect(lambda: self._step(1))
+        row.addWidget(next_btn)
 
-        self.slider = ttk.Scale(frame, from_=0, to=0, orient=tk.HORIZONTAL, command=self._on_slider)
-        self.slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 12))
+        self.slider = QSlider(Qt.Horizontal)
+        self.slider.setMinimum(0)
+        self.slider.setMaximum(0)
+        self.slider.valueChanged.connect(self._on_slider)
+        row.addWidget(self.slider, stretch=1)
 
-        self.index_var = tk.StringVar(value="0")
-        entry = ttk.Entry(frame, textvariable=self.index_var, width=6, justify=tk.RIGHT)
-        entry.pack(side=tk.LEFT)
-        entry.bind("<Return>", self._on_entry)
+        self.index_edit = QLineEdit("0")
+        self.index_edit.setFixedWidth(50)
+        self.index_edit.setAlignment(Qt.AlignRight)
+        self.index_edit.returnPressed.connect(self._on_entry)
+        row.addWidget(self.index_edit)
 
-        ttk.Checkbutton(
-            frame,
-            text="Layer annotations",
-            variable=self.show_layers_var,
-            command=self._redraw,
-        ).pack(side=tk.LEFT, padx=(12, 0))
+        self.layers_checkbox = QCheckBox("Layer annotations")
+        self.layers_checkbox.setChecked(True)
+        self.layers_checkbox.stateChanged.connect(lambda _state: self._redraw())
+        row.addWidget(self.layers_checkbox)
 
-    def _build_status_bar(self):
-        self.status_var = tk.StringVar(value="Open a .E2E file to begin (File > Open, or Ctrl+O).")
-        ttk.Label(self, textvariable=self.status_var, anchor=tk.W, relief=tk.SUNKEN).pack(
-            side=tk.BOTTOM, fill=tk.X
-        )
+        layout.addWidget(frame)
 
-    def _bind_keys(self):
-        self.bind("<Control-o>", lambda e: self._on_open())
-        self.bind("<Control-e>", lambda e: self._on_export())
-        self.bind("<Control-q>", lambda e: self.destroy())
-        self.bind("<Left>", lambda e: self._step(-1))
-        self.bind("<Right>", lambda e: self._step(1))
-        self.bind("<Prior>", lambda e: self._step(-PAGE_STEP))  # Page Up
-        self.bind("<Next>", lambda e: self._step(PAGE_STEP))  # Page Down
-        # Linux mouse wheel events; <MouseWheel> covers Windows/macOS.
-        self.canvas.get_tk_widget().bind("<Button-4>", lambda e: self._step(-WHEEL_STEP))
-        self.canvas.get_tk_widget().bind("<Button-5>", lambda e: self._step(WHEEL_STEP))
-        self.canvas.get_tk_widget().bind("<MouseWheel>", self._on_mousewheel)
+    def _bind_shortcuts(self):
+        # Left/Right/PageUp/PageDown step through B-scans from anywhere in
+        # the window; Qt automatically defers to a focused text field (e.g.
+        # the index entry) for its own cursor movement instead of firing
+        # these, via its shortcut-override handling.
+        self._shortcuts = [
+            QShortcut(QKeySequence(Qt.Key_Left), self, activated=lambda: self._step(-WHEEL_STEP)),
+            QShortcut(QKeySequence(Qt.Key_Right), self, activated=lambda: self._step(WHEEL_STEP)),
+            QShortcut(QKeySequence(Qt.Key_PageUp), self, activated=lambda: self._step(-PAGE_STEP)),
+            QShortcut(QKeySequence(Qt.Key_PageDown), self, activated=lambda: self._step(PAGE_STEP)),
+        ]
 
-    def _on_mousewheel(self, event):
-        self._step(-WHEEL_STEP if event.delta > 0 else WHEEL_STEP)
+    def _on_canvas_wheel(self, event):
+        delta = event.angleDelta().y()
+        self._step(-WHEEL_STEP if delta > 0 else WHEEL_STEP)
+        event.accept()
 
     # ------------------------------------------------------------------ #
     # File loading
     # ------------------------------------------------------------------ #
     def _on_open(self):
-        path = ask_open_filename(
-            title="Open .E2E file",
-            filetypes=[("Heyex E2E files", "*.e2e *.E2E"), ("All files", "*.*")],
+        path, _filter = QFileDialog.getOpenFileName(
+            self,
+            "Open .E2E file",
+            str(Path.home()),
+            "Heyex E2E files (*.e2e *.E2E);;All files (*)",
         )
         if path:
             self.open_path(path)
 
     def open_path(self, path):
         path = Path(path)
-        self.status_var.set(f"Loading {path.name}...")
-        self.update_idletasks()
+        self.statusBar().showMessage(f"Loading {path.name}...")
+        QApplication.processEvents()
         try:
             self.volume = load_e2e(path)
         except Exception as exc:
-            messagebox.showerror("Failed to load file", f"Could not load {path.name}:\n\n{exc}")
-            self.status_var.set("Open a .E2E file to begin (File > Open, or Ctrl+O).")
+            QMessageBox.critical(self, "Failed to load file", f"Could not load {path.name}:\n\n{exc}")
+            self.statusBar().showMessage("Open a .E2E file to begin (File > Open, or Ctrl+O).")
             return
 
         add_recent_file(path)
         self._refresh_recent_menu()
 
-        self.title(f"OCT E2E Viewer — {path.name}")
+        self.setWindowTitle(f"OCT E2E Viewer — {path.name}")
         self.index = self.volume.n_bscans // 2
-        self.slider.configure(to=self.volume.n_bscans - 1)
+        self.slider.setMaximum(self.volume.n_bscans - 1)
 
         self._draw_fundus()
         self._redraw()
@@ -190,26 +224,28 @@ class Viewer(ttk.Window):
 
     def _on_export(self):
         if self.volume is None:
-            messagebox.showinfo("Export as PNG", "Open a .E2E file first.")
+            QMessageBox.information(self, "Export as PNG", "Open a .E2E file first.")
             return
 
         default_name = f"{self.volume.path.stem}_bscan{self.index}.png"
-        path = ask_save_filename(
-            title="Export as PNG",
-            defaultextension=".png",
-            initialfile=default_name,
-            filetypes=[("PNG image", "*.png"), ("All files", "*.*")],
+        path, _filter = QFileDialog.getSaveFileName(
+            self,
+            "Export as PNG",
+            str(Path.home() / default_name),
+            "PNG image (*.png);;All files (*)",
         )
         if not path:
             return
+        if not Path(path).suffix:
+            path += ".png"
 
         try:
             self.figure.savefig(path, dpi=150)
         except Exception as exc:
-            messagebox.showerror("Failed to export", f"Could not save {path}:\n\n{exc}")
+            QMessageBox.critical(self, "Failed to export", f"Could not save {path}:\n\n{exc}")
             return
 
-        self.status_var.set(f"Exported to {path}")
+        self.statusBar().showMessage(f"Exported to {path}")
 
     # ------------------------------------------------------------------ #
     # Drawing
@@ -249,7 +285,7 @@ class Viewer(ttk.Window):
         for line in self.layer_lines:
             line.remove()
         self.layer_lines = []
-        if self.show_layers_var.get():
+        if self.layers_checkbox.isChecked():
             for name, heights in self.volume.bscan_layers(self.index).items():
                 (line,) = self.ax_bscan.plot(heights, linewidth=1, label=name)
                 self.layer_lines.append(line)
@@ -275,8 +311,8 @@ class Viewer(ttk.Window):
 
     def _update_controls(self):
         self._updating_controls = True
-        self.slider.set(self.index)
-        self.index_var.set(str(self.index))
+        self.slider.setValue(self.index)
+        self.index_edit.setText(str(self.index))
         self._updating_controls = False
 
     def _update_status(self, bscan_shape):
@@ -295,7 +331,7 @@ class Viewer(ttk.Window):
         if axial_scale is not None:
             parts.append(f"axial: {axial_scale:.2f} µm/px")
         parts.append(f"{bscan_shape[1]}x{bscan_shape[0]} px")
-        self.status_var.set("  |  ".join(parts))
+        self.statusBar().showMessage("  |  ".join(parts))
 
     # ------------------------------------------------------------------ #
     # Navigation
@@ -314,13 +350,13 @@ class Viewer(ttk.Window):
     def _on_slider(self, value):
         if self._updating_controls or self.volume is None:
             return
-        self._set_index(round(float(value)))
+        self._set_index(value)
 
-    def _on_entry(self, _event):
+    def _on_entry(self):
         try:
-            idx = int(self.index_var.get())
+            idx = int(self.index_edit.text())
         except ValueError:
-            self.index_var.set(str(self.index))
+            self.index_edit.setText(str(self.index))
             return
         self._set_index(idx)
 
@@ -332,9 +368,13 @@ def main(argv=None):
 
         install_desktop_entry()
         return
+
     initial_path = argv[0] if argv else None
-    app = Viewer(initial_path=initial_path)
-    app.mainloop()
+    app = QApplication(sys.argv)
+    apply_stylesheet(app, theme="light_blue.xml")
+    window = Viewer(initial_path=initial_path)
+    window.show()
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":

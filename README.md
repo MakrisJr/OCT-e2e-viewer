@@ -1,6 +1,6 @@
 # OCT E2E Viewer
 
-A small desktop app for scrolling through the B-scans of a Heidelberg Heyex `.E2E` OCT file, one slice at a time, with the current slice's position marked on the en-face fundus image. Built on [eyepy](https://github.com/MedVisBonn/eyepy) for reading `.E2E` files and Tkinter for the UI.
+A small desktop app for scrolling through the B-scans of a Heidelberg Heyex `.E2E` OCT file, one slice at a time, with the current slice's position marked on the en-face fundus image. Built on [eyepy](https://github.com/MedVisBonn/eyepy) for reading `.E2E` files and Qt (PySide6) for the UI.
 
 ![Demo of scrolling through B-scans](assets/demo.webp)
 
@@ -22,9 +22,7 @@ source .venv/bin/activate
 pip install -e .
 ```
 
-Either way, this installs the `oct-e2e-viewer` command and the `oct_e2e_viewer` package.
-
-> **Note:** the UI uses Tkinter, which is part of the Python standard library but not always bundled by default. On Debian/Ubuntu, install it with `sudo apt install python3-tk` if you get a `No module named 'tkinter'` error.
+Either way, this installs the `oct-e2e-viewer` command and the `oct_e2e_viewer` package, including PySide6, so no system Qt/GUI packages need to be installed separately.
 
 ## Run
 
