@@ -19,11 +19,14 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QFileDialog,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSlider,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -65,7 +68,7 @@ class Viewer(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         self.setCentralWidget(central)
 
-        self._build_figure(layout)
+        self._build_view_stack(layout)
         self._build_controls(layout)
         self._build_menu()
         self._bind_shortcuts()
@@ -106,22 +109,67 @@ class Viewer(QMainWindow):
 
     def _refresh_recent_menu(self):
         self.recent_menu.clear()
+        self._populate_recent_menu(self.recent_menu)
+
+    def _populate_recent_menu(self, menu):
         recent = load_recent_files()
         if not recent:
-            action = self.recent_menu.addAction("(No recent files)")
+            action = menu.addAction("(No recent files)")
             action.setEnabled(False)
             return
         for path in recent:
-            action = self.recent_menu.addAction(_recent_label(path))
+            action = menu.addAction(_recent_label(path))
             action.triggered.connect(lambda checked=False, p=path: self.open_path(p))
-        self.recent_menu.addSeparator()
-        self.recent_menu.addAction("Clear Recent Files", self._on_clear_recent)
+        menu.addSeparator()
+        menu.addAction("Clear Recent Files", self._on_clear_recent)
 
     def _on_clear_recent(self):
         clear_recent_files()
         self._refresh_recent_menu()
 
-    def _build_figure(self, layout):
+    def _build_view_stack(self, layout):
+        self.view_stack = QStackedWidget()
+        self._build_empty_state()
+        self._build_figure()
+        self.view_stack.addWidget(self.empty_state)
+        self.view_stack.addWidget(self.chart_widget)
+        layout.addWidget(self.view_stack, stretch=1)
+
+    def _build_empty_state(self):
+        self.empty_state = QWidget()
+        outer = QVBoxLayout(self.empty_state)
+        outer.addStretch(1)
+
+        label = QLabel("No file open")
+        label.setAlignment(Qt.AlignCenter)
+        label.setStyleSheet("font-size: 16pt;")
+        outer.addWidget(label)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+
+        open_btn = QPushButton("Open File...")
+        open_btn.clicked.connect(self._on_open)
+        button_row.addWidget(open_btn)
+
+        recent_btn = QPushButton("Open Recent...")
+        recent_btn.clicked.connect(lambda: self._show_recent_menu(recent_btn))
+        button_row.addWidget(recent_btn)
+
+        button_row.addStretch(1)
+        outer.addLayout(button_row)
+        outer.addStretch(1)
+
+    def _show_recent_menu(self, anchor_widget):
+        menu = QMenu(self)
+        self._populate_recent_menu(menu)
+        menu.exec(anchor_widget.mapToGlobal(anchor_widget.rect().bottomLeft()))
+
+    def _build_figure(self):
+        self.chart_widget = QWidget()
+        chart_layout = QVBoxLayout(self.chart_widget)
+        chart_layout.setContentsMargins(0, 0, 0, 0)
+
         self.figure = Figure(figsize=(10, 5.5))
         self.ax_fundus = self.figure.add_subplot(1, 2, 1)
         self.ax_bscan = self.figure.add_subplot(1, 2, 2)
@@ -131,10 +179,10 @@ class Viewer(QMainWindow):
 
         self.canvas = FigureCanvasQTAgg(self.figure)
         self.canvas.wheelEvent = self._on_canvas_wheel
-        self.toolbar = NavigationToolbar2QT(self.canvas, self)
+        self.toolbar = NavigationToolbar2QT(self.canvas, self.chart_widget)
 
-        layout.addWidget(self.toolbar)
-        layout.addWidget(self.canvas, stretch=1)
+        chart_layout.addWidget(self.toolbar)
+        chart_layout.addWidget(self.canvas, stretch=1)
 
     def _build_controls(self, layout):
         frame = QWidget()
@@ -211,6 +259,7 @@ class Viewer(QMainWindow):
 
         add_recent_file(path)
         self._refresh_recent_menu()
+        self.view_stack.setCurrentWidget(self.chart_widget)
 
         self.setWindowTitle(f"OCT E2E Viewer — {path.name}")
         self.index = self.volume.n_bscans // 2
