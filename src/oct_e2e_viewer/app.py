@@ -217,15 +217,17 @@ class Viewer(QMainWindow):
         layout.addWidget(frame)
 
     def _bind_shortcuts(self):
-        # Left/Right/PageUp/PageDown step through B-scans from anywhere in
-        # the window; Qt automatically defers to a focused text field (e.g.
-        # the index entry) for its own cursor movement instead of firing
-        # these, via its shortcut-override handling.
+        # Left/Right/PageUp/PageDown/Home/End navigate B-scans from anywhere
+        # in the window; Qt automatically defers to a focused text field
+        # (e.g. the index entry) for its own cursor movement instead of
+        # firing these, via its shortcut-override handling.
         self._shortcuts = [
             QShortcut(QKeySequence(Qt.Key_Left), self, activated=lambda: self._step(-WHEEL_STEP)),
             QShortcut(QKeySequence(Qt.Key_Right), self, activated=lambda: self._step(WHEEL_STEP)),
             QShortcut(QKeySequence(Qt.Key_PageUp), self, activated=lambda: self._step(-PAGE_STEP)),
             QShortcut(QKeySequence(Qt.Key_PageDown), self, activated=lambda: self._step(PAGE_STEP)),
+            QShortcut(QKeySequence(Qt.Key_Home), self, activated=lambda: self._set_index(0)),
+            QShortcut(QKeySequence(Qt.Key_End), self, activated=lambda: self._set_index(self.volume.n_bscans - 1 if self.volume else 0)),
         ]
 
     def _on_canvas_wheel(self, event):
