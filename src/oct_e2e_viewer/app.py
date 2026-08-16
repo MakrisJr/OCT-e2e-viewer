@@ -37,6 +37,7 @@ from .recent_files import add_recent_file, clear_recent_files, load_recent_files
 
 WHEEL_STEP = 1
 PAGE_STEP = 10
+CONTRAST_SLIDER_STEPS = 1000
 
 
 def _recent_label(path):
@@ -57,6 +58,11 @@ class Viewer(QMainWindow):
         self.volume: E2EVolume | None = None
         self.index = 0
         self._updating_controls = False
+        self._updating_contrast = False
+        self.vmin = None
+        self.vmax = None
+        self._data_min = None
+        self._data_max = None
 
         self.fundus_image = None
         self.bscan_image = None
@@ -106,6 +112,14 @@ class Viewer(QMainWindow):
         quit_action.setShortcut(QKeySequence.Quit)
         quit_action.triggered.connect(self.close)
         file_menu.addAction(quit_action)
+
+        view_menu = self.menuBar().addMenu("&View")
+
+        self.contrast_action = QAction("Contrast/Brightness Slider", self)
+        self.contrast_action.setCheckable(True)
+        self.contrast_action.setChecked(False)
+        self.contrast_action.toggled.connect(self._toggle_contrast_controls)
+        view_menu.addAction(self.contrast_action)
 
     def _refresh_recent_menu(self):
         self.recent_menu.clear()
@@ -216,6 +230,43 @@ class Viewer(QMainWindow):
 
         layout.addWidget(frame)
 
+        self._build_contrast_controls(layout)
+
+    def _build_contrast_controls(self, layout):
+        self.contrast_frame = QWidget()
+        row = QHBoxLayout(self.contrast_frame)
+        row.setContentsMargins(8, 0, 8, 4)
+
+        row.addWidget(QLabel("Min:"))
+        self.vmin_slider = QSlider(Qt.Horizontal)
+        self.vmin_slider.setMinimum(0)
+        self.vmin_slider.setMaximum(CONTRAST_SLIDER_STEPS)
+        self.vmin_slider.valueChanged.connect(self._on_contrast_slider)
+        row.addWidget(self.vmin_slider, stretch=1)
+        self.vmin_label = QLabel("")
+        self.vmin_label.setFixedWidth(60)
+        row.addWidget(self.vmin_label)
+
+        row.addWidget(QLabel("Max:"))
+        self.vmax_slider = QSlider(Qt.Horizontal)
+        self.vmax_slider.setMinimum(0)
+        self.vmax_slider.setMaximum(CONTRAST_SLIDER_STEPS)
+        self.vmax_slider.valueChanged.connect(self._on_contrast_slider)
+        row.addWidget(self.vmax_slider, stretch=1)
+        self.vmax_label = QLabel("")
+        self.vmax_label.setFixedWidth(60)
+        row.addWidget(self.vmax_label)
+
+        reset_btn = QPushButton("Reset")
+        reset_btn.clicked.connect(self._reset_contrast)
+        row.addWidget(reset_btn)
+
+        self.contrast_frame.setVisible(False)
+        layout.addWidget(self.contrast_frame)
+
+    def _toggle_contrast_controls(self, checked):
+        self.contrast_frame.setVisible(checked)
+
     def _bind_shortcuts(self):
         # Left/Right/PageUp/PageDown/Home/End navigate B-scans from anywhere
         # in the window; Qt automatically defers to a focused text field
@@ -266,6 +317,14 @@ class Viewer(QMainWindow):
         self.setWindowTitle(f"OCT E2E Viewer — {path.name}")
         self.index = self.volume.n_bscans // 2
         self.slider.setMaximum(self.volume.n_bscans - 1)
+
+        self._data_min, self._data_max = self.volume.pixel_range
+        self.vmin, self.vmax = self._data_min, self._data_max
+        self._updating_contrast = True
+        self.vmin_slider.setValue(0)
+        self.vmax_slider.setValue(CONTRAST_SLIDER_STEPS)
+        self._updating_contrast = False
+        self._update_contrast_labels()
 
         self._draw_fundus()
         self._redraw()
@@ -330,7 +389,7 @@ class Viewer(QMainWindow):
             self.bscan_image = self.ax_bscan.imshow(bscan, cmap="gray")
         else:
             self.bscan_image.set_data(bscan)
-            self.bscan_image.set_clim(bscan.min(), bscan.max())
+        self.bscan_image.set_clim(self.vmin, self.vmax)
         self.ax_bscan.set_title(f"B-scan {self.index}/{self.volume.n_bscans - 1}")
 
         for line in self.layer_lines:
@@ -365,6 +424,38 @@ class Viewer(QMainWindow):
         self.slider.setValue(self.index)
         self.index_edit.setText(str(self.index))
         self._updating_controls = False
+
+    def _on_contrast_slider(self, _value):
+        if self._updating_contrast or self.volume is None:
+            return
+        self._updating_contrast = True
+        if self.vmin_slider.value() >= self.vmax_slider.value():
+            if self.sender() is self.vmin_slider:
+                self.vmax_slider.setValue(self.vmin_slider.value() + 1)
+            else:
+                self.vmin_slider.setValue(self.vmax_slider.value() - 1)
+        self._updating_contrast = False
+
+        span = self._data_max - self._data_min
+        self.vmin = self._data_min + span * (self.vmin_slider.value() / CONTRAST_SLIDER_STEPS)
+        self.vmax = self._data_min + span * (self.vmax_slider.value() / CONTRAST_SLIDER_STEPS)
+        self._update_contrast_labels()
+        self._redraw()
+
+    def _reset_contrast(self):
+        if self.volume is None:
+            return
+        self._updating_contrast = True
+        self.vmin_slider.setValue(0)
+        self.vmax_slider.setValue(CONTRAST_SLIDER_STEPS)
+        self._updating_contrast = False
+        self.vmin, self.vmax = self._data_min, self._data_max
+        self._update_contrast_labels()
+        self._redraw()
+
+    def _update_contrast_labels(self):
+        self.vmin_label.setText(f"{self.vmin:.3g}")
+        self.vmax_label.setText(f"{self.vmax:.3g}")
 
     def _update_status(self, bscan_shape):
         parts = [self.volume.path.name, f"slice {self.index}/{self.volume.n_bscans - 1}"]

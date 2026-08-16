@@ -22,6 +22,7 @@ class E2EVolume:
     def __init__(self, ev, path):
         self.ev = ev
         self.path = Path(path)
+        self._pixel_range = None
 
     @property
     def n_bscans(self):
@@ -30,6 +31,18 @@ class E2EVolume:
     def bscan(self, index):
         """Return the B-scan image at `index` as a 2D numpy array."""
         return np.asarray(self.ev[index].data)
+
+    @property
+    def pixel_range(self):
+        """Return (min, max) pixel intensity across the whole B-scan stack,
+        computed once and cached. Used as the bounds for the contrast/
+        brightness sliders, so they cover every slice rather than just the
+        one currently on screen.
+        """
+        if self._pixel_range is None:
+            data = np.asarray(self.ev.data)
+            self._pixel_range = (float(data.min()), float(data.max()))
+        return self._pixel_range
 
     @property
     def fundus(self):
