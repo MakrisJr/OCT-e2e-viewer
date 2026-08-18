@@ -54,6 +54,7 @@ class Viewer(QMainWindow):
         self.setWindowTitle("OCT E2E Viewer")
         self.resize(1100, 650)
         self._set_icon()
+        self.setAcceptDrops(True)
 
         self.volume: E2EVolume | None = None
         self.index = 0
@@ -285,6 +286,26 @@ class Viewer(QMainWindow):
         delta = event.angleDelta().y()
         self._step(-WHEEL_STEP if delta > 0 else WHEEL_STEP)
         event.accept()
+
+    def dragEnterEvent(self, event):
+        if self._e2e_path_from_mime(event.mimeData()):
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        path = self._e2e_path_from_mime(event.mimeData())
+        if path:
+            self.open_path(path)
+            event.acceptProposedAction()
+
+    @staticmethod
+    def _e2e_path_from_mime(mime_data):
+        if not mime_data.hasUrls():
+            return None
+        for url in mime_data.urls():
+            path = Path(url.toLocalFile())
+            if path.suffix.lower() == ".e2e" and path.is_file():
+                return path
+        return None
 
     # ------------------------------------------------------------------ #
     # File loading
