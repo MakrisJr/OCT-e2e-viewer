@@ -10,6 +10,7 @@ import sys
 from importlib.resources import files
 from pathlib import Path
 
+from matplotlib import rcParams
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 from matplotlib.figure import Figure
 from PySide6.QtCore import Qt
@@ -69,6 +70,8 @@ class Viewer(QMainWindow):
         self.bscan_image = None
         self.position_line = None
         self.layer_lines = []
+        self.layer_legend = None
+        self._layer_colors = {}
 
         central = QWidget()
         layout = QVBoxLayout(central)
@@ -121,6 +124,12 @@ class Viewer(QMainWindow):
         self.contrast_action.setChecked(False)
         self.contrast_action.toggled.connect(self._toggle_contrast_controls)
         view_menu.addAction(self.contrast_action)
+
+        self.legend_action = QAction("Layer Legend", self)
+        self.legend_action.setCheckable(True)
+        self.legend_action.setChecked(False)
+        self.legend_action.toggled.connect(lambda _checked: self._redraw())
+        view_menu.addAction(self.legend_action)
 
     def _refresh_recent_menu(self):
         self.recent_menu.clear()
@@ -335,6 +344,8 @@ class Viewer(QMainWindow):
         self._refresh_recent_menu()
         self.view_stack.setCurrentWidget(self.chart_widget)
 
+        self._layer_colors = self._build_layer_colors(self.volume.layer_names)
+
         self.setWindowTitle(f"OCT E2E Viewer — {path.name}")
         self.index = self.volume.n_bscans // 2
         self.slider.setMaximum(self.volume.n_bscans - 1)
@@ -381,6 +392,16 @@ class Viewer(QMainWindow):
     # ------------------------------------------------------------------ #
     # Drawing
     # ------------------------------------------------------------------ #
+    @staticmethod
+    def _build_layer_colors(layer_names):
+        """Assign each layer name a fixed color from the default color
+        cycle, keyed by name rather than plot order, so a layer (e.g. ELM)
+        keeps the same color on every B-scan even when some B-scans are
+        missing other layers.
+        """
+        cycle = rcParams["axes.prop_cycle"].by_key()["color"]
+        return {name: cycle[i % len(cycle)] for i, name in enumerate(layer_names)}
+
     def _draw_fundus(self):
         self.ax_fundus.clear()
         self.ax_fundus.set_xticks([])
@@ -416,10 +437,18 @@ class Viewer(QMainWindow):
         for line in self.layer_lines:
             line.remove()
         self.layer_lines = []
+        if self.layer_legend is not None:
+            self.layer_legend.remove()
+            self.layer_legend = None
         if self.layers_checkbox.isChecked():
             for name, heights in self.volume.bscan_layers(self.index).items():
-                (line,) = self.ax_bscan.plot(heights, linewidth=1, label=name)
+                color = self._layer_colors.get(name)
+                (line,) = self.ax_bscan.plot(heights, linewidth=1, label=name, color=color)
                 self.layer_lines.append(line)
+            if self.layer_lines and self.legend_action.isChecked():
+                self.layer_legend = self.ax_bscan.legend(
+                    loc="upper right", fontsize="small", framealpha=0.7
+                )
         # Layer lines have no sticky edges, so they can nudge autoscale into
         # zooming out slightly; pin the view back to the image extent (or the
         # user's current zoom, if the B-scan dimensions haven't changed).
