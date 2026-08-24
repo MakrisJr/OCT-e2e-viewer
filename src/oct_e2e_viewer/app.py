@@ -18,10 +18,15 @@ from PySide6.QtGui import QAction, QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QDialog,
+    QDialogButtonBox,
+    QDoubleSpinBox,
     QFileDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMenu,
     QMessageBox,
@@ -33,6 +38,7 @@ from PySide6.QtWidgets import (
 )
 from qt_material import apply_stylesheet
 
+from .alignment import DEFAULT_EDGE_POWER, compute_volume_shifts, shift_curve, shift_image
 from .loader import E2EVolume, load_e2e
 from .recent_files import add_recent_file, clear_recent_files, load_recent_files
 
@@ -72,6 +78,12 @@ class Viewer(QMainWindow):
         self.layer_lines = []
         self.layer_legend = None
         self._layer_colors = {}
+
+        self._alignment_enabled = False
+        self._alignment_layers = []
+        self._alignment_edge_power = DEFAULT_EDGE_POWER
+        self._alignment_shifts = None
+        self._last_shift = 0
 
         central = QWidget()
         layout = QVBoxLayout(central)
@@ -130,6 +142,18 @@ class Viewer(QMainWindow):
         self.legend_action.setChecked(False)
         self.legend_action.toggled.connect(lambda _checked: self._redraw())
         view_menu.addAction(self.legend_action)
+
+        view_menu.addSeparator()
+
+        self.alignment_action = QAction("Stabilize B-scan Position", self)
+        self.alignment_action.setCheckable(True)
+        self.alignment_action.setChecked(False)
+        self.alignment_action.toggled.connect(self._toggle_alignment)
+        view_menu.addAction(self.alignment_action)
+
+        alignment_layers_action = QAction("Reference Layer(s)...", self)
+        alignment_layers_action.triggered.connect(self._on_configure_alignment)
+        view_menu.addAction(alignment_layers_action)
 
     def _refresh_recent_menu(self):
         self.recent_menu.clear()
@@ -277,6 +301,73 @@ class Viewer(QMainWindow):
     def _toggle_contrast_controls(self, checked):
         self.contrast_frame.setVisible(checked)
 
+    def _toggle_alignment(self, checked):
+        self._alignment_enabled = checked
+        self._redraw()
+
+    def _on_configure_alignment(self):
+        if self.volume is None:
+            QMessageBox.information(self, "Reference Layer(s)", "Open a .E2E file first.")
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("B-scan Alignment Reference Layer(s)")
+        dialog_layout = QVBoxLayout(dialog)
+
+        dialog_layout.addWidget(QLabel(
+            "Select the segmented layer(s) to align B-scans against (e.g.\n"
+            "BM). Selecting more than one averages them per column before\n"
+            "alignment, so a column can still be used if only some of the\n"
+            "selected layers segmented successfully there."
+        ))
+
+        list_widget = QListWidget()
+        for name in self.volume.layer_names:
+            item = QListWidgetItem(name)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked if name in self._alignment_layers else Qt.Unchecked)
+            list_widget.addItem(item)
+        dialog_layout.addWidget(list_widget)
+
+        power_row = QHBoxLayout()
+        power_row.addWidget(QLabel("Edge weight power (p):"))
+        power_spin = QDoubleSpinBox()
+        power_spin.setRange(0.1, 8.0)
+        power_spin.setSingleStep(0.5)
+        power_spin.setValue(self._alignment_edge_power)
+        power_row.addWidget(power_spin)
+        dialog_layout.addLayout(power_row)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        dialog_layout.addWidget(buttons)
+
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        self._alignment_layers = [
+            list_widget.item(i).text()
+            for i in range(list_widget.count())
+            if list_widget.item(i).checkState() == Qt.Checked
+        ]
+        self._alignment_edge_power = power_spin.value()
+        self._alignment_shifts = None
+        self._redraw()
+
+    def _ensure_alignment_shifts(self):
+        if self._alignment_shifts is not None:
+            return
+        if self.volume is None or not self._alignment_layers:
+            self._alignment_shifts = {}
+            return
+        self._alignment_shifts = compute_volume_shifts(
+            self.volume,
+            range(self.volume.n_bscans),
+            self._alignment_layers,
+            self._alignment_edge_power,
+        )
+
     def _bind_shortcuts(self):
         # Left/Right/PageUp/PageDown/Home/End navigate B-scans from anywhere
         # in the window; Qt automatically defers to a focused text field
@@ -345,6 +436,10 @@ class Viewer(QMainWindow):
         self.view_stack.setCurrentWidget(self.chart_widget)
 
         self._layer_colors = self._build_layer_colors(self.volume.layer_names)
+        self._alignment_layers = (
+            ["BM"] if "BM" in self.volume.layer_names else self.volume.layer_names[:1]
+        )
+        self._alignment_shifts = None
 
         self.setWindowTitle(f"OCT E2E Viewer — {path.name}")
         self.index = self.volume.n_bscans // 2
@@ -420,6 +515,14 @@ class Viewer(QMainWindow):
             return
 
         bscan = self.volume.bscan(self.index)
+        shift = 0
+        if self._alignment_enabled:
+            self._ensure_alignment_shifts()
+            shift = self._alignment_shifts.get(self.index, 0)
+            if shift:
+                bscan = shift_image(bscan, shift)
+        self._last_shift = shift
+
         same_shape = self.bscan_image is not None and self.bscan_image.get_array().shape == bscan.shape
         if same_shape:
             # Preserve whatever zoom/pan the user set via the toolbar instead
@@ -442,6 +545,8 @@ class Viewer(QMainWindow):
             self.layer_legend = None
         if self.layers_checkbox.isChecked():
             for name, heights in self.volume.bscan_layers(self.index).items():
+                if shift:
+                    heights = shift_curve(heights, shift)
                 color = self._layer_colors.get(name)
                 (line,) = self.ax_bscan.plot(heights, linewidth=1, label=name, color=color)
                 self.layer_lines.append(line)
@@ -522,6 +627,9 @@ class Viewer(QMainWindow):
         axial_scale = self.volume.axial_scale_um
         if axial_scale is not None:
             parts.append(f"axial: {axial_scale:.2f} µm/px")
+        if self._alignment_enabled and self._alignment_layers:
+            layers = "+".join(self._alignment_layers)
+            parts.append(f"aligned to {layers} ({self._last_shift:+d}px)")
         parts.append(f"{bscan_shape[1]}x{bscan_shape[0]} px")
         self.statusBar().showMessage("  |  ".join(parts))
 
