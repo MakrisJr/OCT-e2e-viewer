@@ -6,6 +6,7 @@ A small Qt desktop app for scrolling through the B-scans of a Heyex
 fundus image.
 """
 
+import os
 import sys
 from importlib.resources import files
 from pathlib import Path
@@ -670,6 +671,13 @@ def main(argv=None):
         return
 
     initial_path = argv[0] if argv else None
+    if sys.platform.startswith("linux"):
+        # PySide6's bundled Qt has no platform theme set by default, so
+        # QFileDialog falls back to Qt's own generic dialog widget instead of
+        # the desktop's native file picker. Routing through xdg-desktop-portal
+        # gives the real GNOME/KDE/etc. dialog (matches Save Recent/Home dirs,
+        # thumbnails, bookmarks, ...). Respect an explicit user override.
+        os.environ.setdefault("QT_QPA_PLATFORMTHEME", "xdgdesktopportal")
     app = QApplication(sys.argv)
     apply_stylesheet(app, theme="light_blue.xml")
     window = Viewer(initial_path=initial_path)
