@@ -15,6 +15,12 @@ import eyepy
 class E2EVolume:
     """A loaded .E2E scan: the B-scan stack plus its en-face fundus image."""
 
+    # .E2E always carries the *concept* of a fundus image, even if this
+    # particular file has none (see `fundus` below) -- unlike a bare PNG
+    # directory, where a fundus panel never applies. app.py uses this to
+    # decide whether to show a fundus axes at all.
+    supports_fundus = True
+
     # E2E stores laterality as a raw ASCII code (82/76), which eyepy passes
     # through undecoded rather than resolving to 'R'/'L'.
     _LATERALITY_CODES = {82: "R", 76: "L"}

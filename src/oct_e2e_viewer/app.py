@@ -41,6 +41,7 @@ from qt_material import apply_stylesheet
 
 from .alignment import DEFAULT_EDGE_POWER, compute_volume_shifts, shift_curve, shift_image
 from .loader import E2EVolume, load_e2e
+from .png_loader import PNGDirectoryVolume, load_png_directory
 from .recent_files import add_recent_file, clear_recent_files, load_recent_files
 
 WHEEL_STEP = 1
@@ -64,7 +65,7 @@ class Viewer(QMainWindow):
         self._set_icon()
         self.setAcceptDrops(True)
 
-        self.volume: E2EVolume | None = None
+        self.volume: E2EVolume | PNGDirectoryVolume | None = None
         self.index = 0
         self._updating_controls = False
         self._updating_contrast = False
@@ -95,7 +96,9 @@ class Viewer(QMainWindow):
         self._build_controls(layout)
         self._build_menu()
         self._bind_shortcuts()
-        self.statusBar().showMessage("Open a .E2E file to begin (File > Open, or Ctrl+O).")
+        self.statusBar().showMessage(
+            "Open a .E2E file or a directory of PNG B-scans to begin (File > Open, or Ctrl+O)."
+        )
 
         if initial_path:
             self.open_path(initial_path)
@@ -110,10 +113,15 @@ class Viewer(QMainWindow):
     def _build_menu(self):
         file_menu = self.menuBar().addMenu("&File")
 
-        open_action = QAction("&Open...", self)
+        open_action = QAction("&Open File...", self)
         open_action.setShortcut(QKeySequence.Open)
         open_action.triggered.connect(self._on_open)
         file_menu.addAction(open_action)
+
+        open_dir_action = QAction("Open &Directory...", self)
+        open_dir_action.setShortcut("Ctrl+Shift+O")
+        open_dir_action.triggered.connect(self._on_open_directory)
+        file_menu.addAction(open_dir_action)
 
         self.recent_menu = file_menu.addMenu("Open Recent")
         self._refresh_recent_menu()
@@ -201,6 +209,10 @@ class Viewer(QMainWindow):
         open_btn.clicked.connect(self._on_open)
         button_row.addWidget(open_btn)
 
+        open_dir_btn = QPushButton("Open Directory...")
+        open_dir_btn.clicked.connect(self._on_open_directory)
+        button_row.addWidget(open_dir_btn)
+
         recent_btn = QPushButton("Open Recent...")
         recent_btn.clicked.connect(lambda: self._show_recent_menu(recent_btn))
         button_row.addWidget(recent_btn)
@@ -220,11 +232,8 @@ class Viewer(QMainWindow):
         chart_layout.setContentsMargins(0, 0, 0, 0)
 
         self.figure = Figure(figsize=(10, 5.5))
-        self.ax_fundus = self.figure.add_subplot(1, 2, 1)
-        self.ax_bscan = self.figure.add_subplot(1, 2, 2)
-        for ax in (self.ax_fundus, self.ax_bscan):
-            ax.set_xticks([])
-            ax.set_yticks([])
+        self._has_fundus_axes = None
+        self._configure_axes(has_fundus=True)
 
         self.canvas = FigureCanvasQTAgg(self.figure)
         self.canvas.wheelEvent = self._on_canvas_wheel
@@ -232,6 +241,33 @@ class Viewer(QMainWindow):
 
         chart_layout.addWidget(self.toolbar)
         chart_layout.addWidget(self.canvas, stretch=1)
+
+    def _configure_axes(self, has_fundus):
+        """(Re)build the figure's subplots for whether the open volume can
+        ever have a fundus image (e.g. a PNG directory never can), rebuilding
+        only when that changes so ordinary file/directory switches within the
+        same layout don't pay for tearing down the figure.
+        """
+        if has_fundus == self._has_fundus_axes:
+            return
+        self._has_fundus_axes = has_fundus
+
+        self.figure.clear()
+        if has_fundus:
+            self.ax_fundus = self.figure.add_subplot(1, 2, 1)
+            self.ax_bscan = self.figure.add_subplot(1, 2, 2)
+        else:
+            self.ax_fundus = None
+            self.ax_bscan = self.figure.add_subplot(1, 1, 1)
+        for ax in filter(None, (self.ax_fundus, self.ax_bscan)):
+            ax.set_xticks([])
+            ax.set_yticks([])
+
+        # The old axes (and everything drawn on them) are gone now.
+        self.bscan_image = None
+        self.layer_lines = []
+        self.layer_legend = None
+        self.position_line = None
 
     def _build_controls(self, layout):
         frame = QWidget()
@@ -389,22 +425,22 @@ class Viewer(QMainWindow):
         event.accept()
 
     def dragEnterEvent(self, event):
-        if self._e2e_path_from_mime(event.mimeData()):
+        if self._droppable_path_from_mime(event.mimeData()):
             event.acceptProposedAction()
 
     def dropEvent(self, event):
-        path = self._e2e_path_from_mime(event.mimeData())
+        path = self._droppable_path_from_mime(event.mimeData())
         if path:
             self.open_path(path)
             event.acceptProposedAction()
 
     @staticmethod
-    def _e2e_path_from_mime(mime_data):
+    def _droppable_path_from_mime(mime_data):
         if not mime_data.hasUrls():
             return None
         for url in mime_data.urls():
             path = Path(url.toLocalFile())
-            if path.suffix.lower() == ".e2e" and path.is_file():
+            if path.is_dir() or (path.suffix.lower() == ".e2e" and path.is_file()):
                 return path
         return None
 
@@ -421,20 +457,42 @@ class Viewer(QMainWindow):
         if path:
             self.open_path(path)
 
+    def _on_open_directory(self):
+        path = QFileDialog.getExistingDirectory(
+            self, "Open directory of PNG B-scans", str(Path.home())
+        )
+        if path:
+            self.open_path(path)
+
     def open_path(self, path):
         path = Path(path)
         self.statusBar().showMessage(f"Loading {path.name}...")
         QApplication.processEvents()
         try:
-            self.volume = load_e2e(path)
+            self.volume = load_png_directory(path) if path.is_dir() else load_e2e(path)
         except Exception as exc:
             QMessageBox.critical(self, "Failed to load file", f"Could not load {path.name}:\n\n{exc}")
-            self.statusBar().showMessage("Open a .E2E file to begin (File > Open, or Ctrl+O).")
+            self.statusBar().showMessage(
+                "Open a .E2E file or a directory of PNG B-scans to begin (File > Open, or Ctrl+O)."
+            )
             return
 
         add_recent_file(path)
         self._refresh_recent_menu()
         self.view_stack.setCurrentWidget(self.chart_widget)
+
+        self._configure_axes(has_fundus=self.volume.supports_fundus)
+
+        # Remove the previous volume's image artist rather than reusing it via
+        # set_data() in _redraw(): set_data() keeps the old extent, so a
+        # differently-shaped B-scan would be squeezed into the old bounds.
+        # Dropping the reference alone isn't enough -- it would leave the old
+        # artist attached to the axes, showing through as a ghost image
+        # wherever the new one doesn't fully cover it. (_configure_axes
+        # already clears this when the axes layout itself changed.)
+        if self.bscan_image is not None:
+            self.bscan_image.remove()
+            self.bscan_image = None
 
         self._layer_colors = self._build_layer_colors(self.volume.layer_names)
         self._alignment_layers = (
@@ -499,6 +557,8 @@ class Viewer(QMainWindow):
         return {name: cycle[i % len(cycle)] for i, name in enumerate(layer_names)}
 
     def _draw_fundus(self):
+        if self.ax_fundus is None:
+            return
         self.ax_fundus.clear()
         self.ax_fundus.set_xticks([])
         self.ax_fundus.set_yticks([])
