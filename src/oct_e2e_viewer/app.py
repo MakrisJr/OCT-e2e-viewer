@@ -6,6 +6,7 @@ A small Qt desktop app for scrolling through the B-scans of a Heyex
 fundus image.
 """
 
+import math
 import os
 import sys
 from importlib.resources import files
@@ -237,6 +238,7 @@ class Viewer(QMainWindow):
 
         self.canvas = FigureCanvasQTAgg(self.figure)
         self.canvas.wheelEvent = self._on_canvas_wheel
+        self.canvas.mpl_connect("button_press_event", self._on_fundus_click)
         self.toolbar = NavigationToolbar2QT(self.canvas, self.chart_widget)
 
         chart_layout.addWidget(self.toolbar)
@@ -423,6 +425,46 @@ class Viewer(QMainWindow):
         delta = event.angleDelta().y()
         self._step(-WHEEL_STEP if delta > 0 else WHEEL_STEP)
         event.accept()
+
+    def _on_fundus_click(self, event):
+        # Ignore clicks outside the fundus axes, and clicks that are actually
+        # part of the toolbar's own pan/zoom drag rather than a plain click.
+        if self.volume is None or event.inaxes is not self.ax_fundus:
+            return
+        if event.xdata is None or event.ydata is None:
+            return
+        if self.toolbar.mode:
+            return
+        index = self._nearest_bscan_index(event.xdata, event.ydata)
+        if index is not None:
+            self._set_index(index)
+
+    def _nearest_bscan_index(self, x, y):
+        """Return the index of the B-scan whose position line on the fundus
+        image is closest to fundus-pixel point `(x, y)`, or None if no
+        B-scan has a resolvable position (e.g. no localizer).
+        """
+        best_index = None
+        best_dist = None
+        for i in range(self.volume.n_bscans):
+            line = self.volume.bscan_line(i)
+            if line is None:
+                continue
+            (x0, y0), (x1, y1) = line
+            dist = self._point_segment_distance(x, y, x0, y0, x1, y1)
+            if best_dist is None or dist < best_dist:
+                best_dist = dist
+                best_index = i
+        return best_index
+
+    @staticmethod
+    def _point_segment_distance(px, py, x0, y0, x1, y1):
+        dx, dy = x1 - x0, y1 - y0
+        if dx == 0 and dy == 0:
+            return math.hypot(px - x0, py - y0)
+        t = ((px - x0) * dx + (py - y0) * dy) / (dx * dx + dy * dy)
+        t = max(0.0, min(1.0, t))
+        return math.hypot(px - (x0 + t * dx), py - (y0 + t * dy))
 
     def dragEnterEvent(self, event):
         if self._droppable_path_from_mime(event.mimeData()):
