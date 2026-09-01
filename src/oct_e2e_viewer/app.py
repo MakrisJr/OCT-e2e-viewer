@@ -48,6 +48,7 @@ from .recent_files import add_recent_file, clear_recent_files, load_recent_files
 WHEEL_STEP = 1
 PAGE_STEP = 10
 CONTRAST_SLIDER_STEPS = 1000
+MIN_CALIPER_DRAG_PX = 3
 
 
 def _recent_label(path):
@@ -87,6 +88,10 @@ class Viewer(QMainWindow):
         self._alignment_edge_power = DEFAULT_EDGE_POWER
         self._alignment_shifts = None
         self._last_shift = 0
+
+        self._caliper_enabled = False
+        self._caliper_lines = []
+        self._caliper_drag = None
 
         central = QWidget()
         layout = QVBoxLayout(central)
@@ -239,6 +244,9 @@ class Viewer(QMainWindow):
         self.canvas = FigureCanvasQTAgg(self.figure)
         self.canvas.wheelEvent = self._on_canvas_wheel
         self.canvas.mpl_connect("button_press_event", self._on_fundus_click)
+        self.canvas.mpl_connect("button_press_event", self._on_caliper_press)
+        self.canvas.mpl_connect("motion_notify_event", self._on_caliper_motion)
+        self.canvas.mpl_connect("button_release_event", self._on_caliper_release)
         self.toolbar = NavigationToolbar2QT(self.canvas, self.chart_widget)
 
         chart_layout.addWidget(self.toolbar)
@@ -270,6 +278,8 @@ class Viewer(QMainWindow):
         self.layer_lines = []
         self.layer_legend = None
         self.position_line = None
+        self._caliper_lines = []
+        self._caliper_drag = None
 
     def _build_controls(self, layout):
         frame = QWidget()
@@ -300,6 +310,17 @@ class Viewer(QMainWindow):
         self.layers_checkbox.setChecked(True)
         self.layers_checkbox.stateChanged.connect(lambda _state: self._redraw())
         row.addWidget(self.layers_checkbox)
+
+        self.caliper_checkbox = QCheckBox("Caliper")
+        self.caliper_checkbox.setToolTip(
+            "Click and drag on the B-scan to measure a distance"
+        )
+        self.caliper_checkbox.toggled.connect(self._toggle_caliper)
+        row.addWidget(self.caliper_checkbox)
+
+        clear_caliper_btn = QPushButton("Clear Calipers")
+        clear_caliper_btn.clicked.connect(self._on_clear_calipers_clicked)
+        row.addWidget(clear_caliper_btn)
 
         layout.addWidget(frame)
 
@@ -342,6 +363,7 @@ class Viewer(QMainWindow):
 
     def _toggle_alignment(self, checked):
         self._alignment_enabled = checked
+        self._clear_calipers()
         self._redraw()
 
     def _on_configure_alignment(self):
@@ -392,6 +414,7 @@ class Viewer(QMainWindow):
         ]
         self._alignment_edge_power = power_spin.value()
         self._alignment_shifts = None
+        self._clear_calipers()
         self._redraw()
 
     def _ensure_alignment_shifts(self):
@@ -466,6 +489,117 @@ class Viewer(QMainWindow):
         t = max(0.0, min(1.0, t))
         return math.hypot(px - (x0 + t * dx), py - (y0 + t * dy))
 
+    # ------------------------------------------------------------------ #
+    # Caliper (distance measurement)
+    # ------------------------------------------------------------------ #
+    def _toggle_caliper(self, checked):
+        self._caliper_enabled = checked
+        self.canvas.setCursor(Qt.CrossCursor if checked else Qt.ArrowCursor)
+        if not checked and self._caliper_drag is not None:
+            # Cancel whatever measurement was mid-drag rather than leaving a
+            # dangling line the user can no longer finish or see updated.
+            self._caliper_drag["line"].remove()
+            self._caliper_drag["label"].remove()
+            self._caliper_drag = None
+            self.canvas.draw_idle()
+
+    def _on_clear_calipers_clicked(self):
+        self._clear_calipers()
+        self.canvas.draw_idle()
+
+    def _clear_calipers(self):
+        if self._caliper_drag is not None:
+            self._caliper_drag["line"].remove()
+            self._caliper_drag["label"].remove()
+            self._caliper_drag = None
+        for item in self._caliper_lines:
+            item["line"].remove()
+            item["label"].remove()
+        self._caliper_lines = []
+
+    def _on_caliper_press(self, event):
+        if (
+            self.volume is None
+            or not self._caliper_enabled
+            or event.inaxes is not self.ax_bscan
+            or event.button != 1
+            or self.toolbar.mode
+            or event.xdata is None
+            or event.ydata is None
+        ):
+            return
+        line, label = self._create_caliper_artists(event.xdata, event.ydata, event.xdata, event.ydata)
+        self._caliper_drag = {"start": (event.xdata, event.ydata), "line": line, "label": label}
+        self.canvas.draw_idle()
+
+    def _on_caliper_motion(self, event):
+        if self._caliper_drag is None or event.inaxes is not self.ax_bscan:
+            return
+        if event.xdata is None or event.ydata is None:
+            return
+        x0, y0 = self._caliper_drag["start"]
+        self._update_caliper_artists(
+            self._caliper_drag["line"], self._caliper_drag["label"], x0, y0, event.xdata, event.ydata
+        )
+        self.canvas.draw_idle()
+
+    def _on_caliper_release(self, event):
+        if self._caliper_drag is None or event.button != 1:
+            return
+        drag = self._caliper_drag
+        self._caliper_drag = None
+        x0, y0 = drag["start"]
+        x1, y1 = event.xdata, event.ydata
+        if x1 is None or y1 is None:
+            # Released outside the axes -- fall back to wherever the line was
+            # last dragged to rather than discarding the measurement.
+            x1, y1 = drag["line"].get_xdata()[1], drag["line"].get_ydata()[1]
+        if math.hypot(x1 - x0, y1 - y0) < MIN_CALIPER_DRAG_PX:
+            # Too short to be an intentional measurement (e.g. a plain click).
+            drag["line"].remove()
+            drag["label"].remove()
+            self.canvas.draw_idle()
+            return
+        self._update_caliper_artists(drag["line"], drag["label"], x0, y0, x1, y1)
+        self._caliper_lines.append({"line": drag["line"], "label": drag["label"]})
+        self.canvas.draw_idle()
+
+    def _create_caliper_artists(self, x0, y0, x1, y1):
+        (line,) = self.ax_bscan.plot(
+            [x0, x1],
+            [y0, y1],
+            color="yellow",
+            linewidth=1.5,
+            marker="o",
+            markersize=4,
+            markeredgecolor="black",
+            markeredgewidth=0.5,
+        )
+        label = self.ax_bscan.text(
+            (x0 + x1) / 2,
+            (y0 + y1) / 2,
+            "",
+            color="yellow",
+            fontsize=8,
+            ha="center",
+            va="bottom",
+            bbox={"boxstyle": "round,pad=0.2", "fc": "black", "alpha": 0.6, "ec": "none"},
+        )
+        self._update_caliper_artists(line, label, x0, y0, x1, y1)
+        return line, label
+
+    def _update_caliper_artists(self, line, label, x0, y0, x1, y1):
+        line.set_data([x0, x1], [y0, y1])
+        label.set_position(((x0 + x1) / 2, (y0 + y1) / 2))
+        label.set_text(self._caliper_label_text(x1 - x0, y1 - y0))
+
+    def _caliper_label_text(self, dx, dy):
+        dist_px = math.hypot(dx, dy)
+        axial_scale = self.volume.axial_scale_um if self.volume else None
+        if axial_scale is None:
+            return f"{dist_px:.1f} px"
+        return f"{dist_px:.1f} px  ({abs(dy) * axial_scale:.1f} µm vert.)"
+
     def dragEnterEvent(self, event):
         if self._droppable_path_from_mime(event.mimeData()):
             event.acceptProposedAction()
@@ -523,6 +657,10 @@ class Viewer(QMainWindow):
         self._refresh_recent_menu()
         self.view_stack.setCurrentWidget(self.chart_widget)
 
+        # Remove the previous volume's caliper measurements before the axes
+        # are (maybe) rebuilt -- they were drawn on anatomy that's about to
+        # disappear.
+        self._clear_calipers()
         self._configure_axes(has_fundus=self.volume.supports_fundus)
 
         # Remove the previous volume's image artist rather than reusing it via
@@ -742,7 +880,10 @@ class Viewer(QMainWindow):
     def _set_index(self, index):
         if self.volume is None:
             return
-        self.index = max(0, min(self.volume.n_bscans - 1, int(index)))
+        new_index = max(0, min(self.volume.n_bscans - 1, int(index)))
+        if new_index != self.index:
+            self._clear_calipers()
+        self.index = new_index
         self._redraw()
 
     def _step(self, delta):
